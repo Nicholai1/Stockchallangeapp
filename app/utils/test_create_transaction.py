@@ -38,6 +38,7 @@ def create_test_transaction(user_id: int, symbol: str, type_: str, quantity: flo
         type=type_,
         quantity=quantity,
         price=price,
+        total_amount=quantity * price,
         currency=currency
     )
 
@@ -58,7 +59,7 @@ def get_transactions_for_user(user_id: int):
         print(f"Ingen transaktioner fundet for bruger {user_id}")
     for t in transactions:
         print(f"ID={t.id}, Symbol={t.symbol}, Company={t.name}, Type={t.type}, Qty={t.quantity}, "
-              f"Price={t.price}, Currency={t.currency}, Created_at={t.created_at}")
+              f"Price={t.price}, Currency={t.currency}, Created_at={t.created_at}, Total_Amount={t.total_amount}")
     return transactions
 
 # --- Kør testsekvens ---

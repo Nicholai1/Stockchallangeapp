@@ -30,6 +30,7 @@ def create_transaction(transaction_in: transaction_schema.TransactionCreate, db:
         type=transaction_in.type,
         quantity=transaction_in.quantity,
         price=transaction_in.price,
+        total_amount=transaction_in.quantity * transaction_in.price,
         currency=currency
     )
 

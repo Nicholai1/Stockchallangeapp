@@ -17,6 +17,7 @@ class TransactionRead(BaseModel):
     type: str
     quantity: float
     price: float
+    total_amount: float
     currency: str
     created_at: str
 
