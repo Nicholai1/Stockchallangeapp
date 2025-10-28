@@ -1,12 +1,9 @@
 from app.database import SessionLocal, engine
 from app.models import Base, User, Transaction
 from app.utils.auth import get_password_hash
-from app.schemas.transaction import TransactionCreate
 import yfinance as yf
 
-
-# --- Opret tabeller (hvis de ikke findes) ---
-# DROP og genopret alle tabeller (kun under udvikling!)
+# --- DROP og genopret alle tabeller (kun under udvikling!) ---
 Base.metadata.drop_all(bind=engine)
 Base.metadata.create_all(bind=engine)
 
@@ -29,7 +26,6 @@ def create_test_user(username: str, password: str):
 
 # --- Funktion til at oprette testtransaktion ---
 def create_test_transaction(user_id: int, symbol: str, type_: str, quantity: float, price: float):
-    # Hent selskabsinfo via Yahoo Finance
     ticker = yf.Ticker(symbol)
     info = ticker.info
     company_name = info.get("longName") or symbol
@@ -67,16 +63,38 @@ def get_transactions_for_user(user_id: int):
 
 # --- Kør testsekvens ---
 if __name__ == "__main__":
-    # 1. Opret testbruger
-    user = create_test_user("testuser_full", "Hemmelig123")
+    # --- Opret flere testbrugere ---
+    users = [
+        create_test_user("alice", "Password123"),
+        create_test_user("bob", "Secret456"),
+        create_test_user("charlie", "Hemmelig789")
+    ]
 
-    # 2. Opret nogle testtransaktioner
-    create_test_transaction(user.id, "AAPL", "BUY", 5, 174.5)
-    create_test_transaction(user.id, "MSFT", "SELL", 2, 330.2)
-    create_test_transaction(user.id, "GOOGL", "BUY", 1, 136.8)
+    # --- Opret transaktioner for hver bruger ---
+    transactions_data = {
+        "alice": [
+            ("AAPL", "BUY", 10, 175.0),
+            ("TSLA", "BUY", 3, 290.0)
+        ],
+        "bob": [
+            ("MSFT", "BUY", 5, 330.2),
+            ("GOOGL", "SELL", 1, 136.8)
+        ],
+        "charlie": [
+            ("AMZN", "BUY", 2, 98.5),
+            ("NFLX", "BUY", 4, 450.0),
+            ("AAPL", "SELL", 2, 175.0)
+        ]
+    }
 
-    # 3. Hent og vis alle transaktioner for brugeren
-    get_transactions_for_user(user.id)
+    for user in users:
+        for symbol, type_, qty, price in transactions_data[user.username]:
+            create_test_transaction(user.id, symbol, type_, qty, price)
+
+    # --- Hent og vis alle transaktioner for alle brugere ---
+    for user in users:
+        print(f"\nTransaktioner for bruger {user.username}:")
+        get_transactions_for_user(user.id)
 
 # --- Luk session til sidst ---
 db.close()
