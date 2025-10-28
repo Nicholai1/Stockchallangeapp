@@ -10,7 +10,7 @@ class UserCreate(BaseModel):
 class UserRead(BaseModel):
     id: int
     username: str
-    created_at: datetime  # Brug datetime i stedet for str
+    created_at: datetime  # Brug datetime direkte
 
     model_config = {
         "from_attributes": True  # erstatter orm_mode
