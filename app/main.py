@@ -1,44 +1,14 @@
+from app.routers import user as user_router
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from .database import Base, engine
+from app.database import engine
+from app import models
 
-# Importér routers
-from .routers import portfolio
+# Dette opretter tabellerne (User osv.)
+models.Base.metadata.create_all(bind=engine)
 
-# ------------------------------------------------------------
-# Initialiser database
-# ------------------------------------------------------------
-Base.metadata.create_all(bind=engine)
+app = FastAPI(title="Stock Portfolio API")
+app.include_router(user_router.router)
 
-# ------------------------------------------------------------
-# Opret FastAPI app
-# ------------------------------------------------------------
-app = FastAPI(
-    title="MyStock Portfolio API",
-    description="En simpel FastAPI app til at følge dine egne aktier",
-    version="0.2.0",
-)
-
-# ------------------------------------------------------------
-# CORS setup
-# ------------------------------------------------------------
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# ------------------------------------------------------------
-# Inkludér routers
-# ------------------------------------------------------------
-app.include_router(portfolio.router)
-
-
-# ------------------------------------------------------------
-# Root endpoint
-# ------------------------------------------------------------
 @app.get("/")
 def root():
-    return {"message": "Velkommen til MyStock Portfolio API 🚀"}
+    return {"message": "Velkommen til Stock Portfolio API"}

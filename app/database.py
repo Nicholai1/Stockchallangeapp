@@ -1,34 +1,25 @@
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from app.config import settings
 
-# ------------------------------------------------------------
-# 1. Database URL
-# ------------------------------------------------------------
-SQLALCHEMY_DATABASE_URL = "sqlite:///./portfolio.db"
-# (Skift evt. til PostgreSQL senere)
-# SQLALCHEMY_DATABASE_URL = "postgresql://user:password@host:port/dbname"
+# Database URL hentes fra config
+SQLALCHEMY_DATABASE_URL = settings.DATABASE_URL
 
-# ------------------------------------------------------------
-# 2. Engine
-# ------------------------------------------------------------
+# Opret SQLAlchemy engine (SQLite til udvikling)
 engine = create_engine(
-    SQLALCHEMY_DATABASE_URL,
-    connect_args={"check_same_thread": False}  # Kun nødvendigt for SQLite
+    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
 )
 
-# ------------------------------------------------------------
-# 3. Session & Base
-# ------------------------------------------------------------
+# SessionLocal bruges i endpoints til at få DB-sessioner
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-# Base metadata
+
+# Base er "grundklassen" som alle modeller arver fra
 Base = declarative_base()
 
 
-# ------------------------------------------------------------
-# 4. Dependency til FastAPI
-# ------------------------------------------------------------
+# Dependency som bruges i endpoints:
 def get_db():
-    """Returnér en ny database-session til hver request"""
     db = SessionLocal()
     try:
         yield db
