@@ -1,7 +1,6 @@
 from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, func
 from sqlalchemy.orm import relationship
 from app.database import Base
-from app.models.user import User
 
 class Transaction(Base):
     __tablename__ = "transactions"

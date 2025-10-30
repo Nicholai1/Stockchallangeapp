@@ -2,8 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Transaction, User
+from app.models import StockPrice
 from app.schemas import transaction as transaction_schema
 import yfinance as yf
+from app.services.stocks import get_stock_info
 
 router = APIRouter(
     prefix="/transactions",
@@ -37,6 +39,20 @@ def create_transaction(transaction_in: transaction_schema.TransactionCreate, db:
     db.add(new_transaction)
     db.commit()
     db.refresh(new_transaction)
+
+    # Hvis ticker ikke findes i StockPrice, indsæt den med nuværende pris
+    existing = db.query(StockPrice).filter(StockPrice.symbol == new_transaction.symbol).first()
+    if not existing:
+        info = get_stock_info(new_transaction.symbol)
+        sp = StockPrice(
+            symbol=new_transaction.symbol,
+            name=info.get("name"),
+            currency=info.get("currency"),
+            current_price=info.get("price", 0),
+        )
+        db.add(sp)
+        db.commit()
+        db.refresh(sp)
     return new_transaction
 
 @router.get("/{user_id}", response_model=list[transaction_schema.TransactionRead])
