@@ -23,6 +23,7 @@ class Transaction(Base):
     symbol = Column(String, nullable=False)
     amount = Column(int, nullable=False)
     price = Column(Float, nullable=False)
+    total_amount = Column(Float, default=0.0)
     currency = Column(String, nullable=False)  # Valutaenhed (f.eks. USD)
     full_name = Column(String, nullable=False)  # Aktiens fulde navn
     created_at = Column(DateTime, default=datetime.utcnow)

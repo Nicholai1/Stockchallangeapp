@@ -2,6 +2,7 @@ from app.database import SessionLocal, engine
 from app.models import Base, User, Transaction
 from app.utils.auth import get_password_hash
 import yfinance as yf
+from app.services.stocks import ensure_stock_in_db
 
 # --- DROP og genopret alle tabeller (kun under udvikling!) ---
 Base.metadata.drop_all(bind=engine)
@@ -31,6 +32,12 @@ def create_test_transaction(user_id: int, symbol: str, type_: str, quantity: flo
     company_name = info.get("longName") or symbol
     currency = info.get("currency") or "USD"
 
+    # Ensure stock is tracked in stock_prices table (upsert)
+    try:
+        ensure_stock_in_db(db, symbol)
+    except Exception as e:
+        print(f"Advarsel: Kunne ikke upserte stock '{symbol}': {e}")
+
     new_transaction = Transaction(
         user_id=user_id,
         symbol=symbol,
@@ -38,6 +45,7 @@ def create_test_transaction(user_id: int, symbol: str, type_: str, quantity: flo
         type=type_,
         quantity=quantity,
         price=price,
+        total_amount=quantity * price,
         currency=currency
     )
 
@@ -58,7 +66,7 @@ def get_transactions_for_user(user_id: int):
         print(f"Ingen transaktioner fundet for bruger {user_id}")
     for t in transactions:
         print(f"ID={t.id}, Symbol={t.symbol}, Company={t.name}, Type={t.type}, Qty={t.quantity}, "
-              f"Price={t.price}, Currency={t.currency}, Created_at={t.created_at}")
+              f"Price={t.price}, Currency={t.currency}, Created_at={t.created_at}, Total_Amount={t.total_amount}")
     return transactions
 
 # --- Kør testsekvens ---
