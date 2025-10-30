@@ -16,3 +16,11 @@ def get_password_hash(password: str) -> str:
 
     # Hash password direkte fra bytes
     return pwd_context.hash(pw_bytes)
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify a plaintext password against a stored bcrypt hash."""
+    pw_bytes = plain_password.encode("utf-8")
+    if len(pw_bytes) > 72:
+        pw_bytes = pw_bytes[:72]
+    return pwd_context.verify(pw_bytes, hashed_password)

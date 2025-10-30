@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="da">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stock Portfolio - Demo</title>
+  <link rel="stylesheet" href="/app/main.css" />
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>Stock Portfolio (Demo)</h1>
+    </header>
+
+    <section>
+      <login-form @login-success="onLogin"></login-form>
+    </section>
+
+    <section v-if="user">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <h2>Hej, {{ user.username }}</h2>
+        <div>
+          <button @click="logout">Logout</button>
+        </div>
+      </div>
+      <transaction-form :user="user" @created="refreshPortfolio"></transaction-form>
+      <portfolio-view :user="user" :refresh-key="refreshKey"></portfolio-view>
+      <transactions-view :user="user" :refresh-key="refreshKey"></transactions-view>
+    </section>
+  </div>
+
+  <script>
+  const { createApp, ref } = Vue;
+
+  const LoginForm = {
+    template: `
+      <div class="card">
+        <h3 v-if="!isRegister">Login</h3>
+        <h3 v-else>Opret bruger</h3>
+
+        <form v-if="!isRegister" @submit.prevent="login">
+          <label>Username
+            <input v-model="username" required />
+          </label>
+          <label>Password
+            <input v-model="password" type="password" required />
+          </label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button type="submit">Log ind</button>
+            <button type="button" @click="isRegister=true">Opret bruger</button>
+          </div>
+          <p v-if="error" class="error">{{ error }}</p>
+        </form>
+
+        <form v-else @submit.prevent="register">
+          <label>Username
+            <input v-model="username" required />
+          </label>
+          <label>Password
+            <input v-model="password" type="password" required />
+          </label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button type="submit">Opret</button>
+            <button type="button" @click="isRegister=false">Tilbage til login</button>
+          </div>
+          <p v-if="error" class="error">{{ error }}</p>
+          <p v-if="info" class="info">{{ info }}</p>
+        </form>
+      </div>
+    `,
+    data() {
+      return { username: '', password: '', error: null, info: null, isRegister: false };
+    },
+    methods: {
+      async login() {
+        this.error = null;
+        try {
+          const res = await fetch('/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: this.username, password: this.password })
+          });
+          if (!res.ok) {
+            const j = await res.json().catch(()=>({detail:'Login failed'}));
+            this.error = j.detail || 'Login mislykkedes';
+            return;
+          }
+          const user = await res.json();
+          this.$emit('login-success', user);
+        } catch (err) {
+          this.error = err.message || String(err);
+        }
+      },
+
+      async register() {
+        this.error = null;
+        this.info = null;
+        try {
+          const res = await fetch('/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: this.username, password: this.password })
+          });
+          if (!res.ok) {
+            const j = await res.json().catch(()=>({detail:'Registration failed'}));
+            this.error = j.detail || 'Kunne ikke oprette bruger';
+            return;
+          }
+          // On success, auto-login the new user
+          const loginRes = await fetch('/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: this.username, password: this.password })
+          });
+          if (!loginRes.ok) {
+            this.info = 'Bruger oprettet. Log ind manuelt.';
+            this.isRegister = false;
+            return;
+          }
+          const user = await loginRes.json();
+          this.$emit('login-success', user);
+        } catch (err) {
+          this.error = err.message || String(err);
+        }
+      }
+    }
+  };
+
+  const TransactionForm = {
+    props: ['user'],
+    template: `
+      <div class="card">
+        <h3>Opret transaktion</h3>
+        <form @submit.prevent="create">
+          <label>Symbol
+            <input v-model="symbol" required />
+          </label>
+          <label>Type
+            <select v-model="type">
+              <option value="buy">Buy</option>
+              <option value="sell">Sell</option>
+            </select>
+          </label>
+          <label>Quantity
+            <input v-model.number="quantity" type="number" step="any" required />
+          </label>
+          <label>Price
+            <input v-model.number="price" type="number" step="any" required />
+          </label>
+          <button type="submit">Opret</button>
+          <p v-if="msg" class="info">{{ msg }}</p>
+        </form>
+      </div>
+    `,
+    data() { return { symbol:'AAPL', type:'buy', quantity:1, price:0, msg:null }; },
+    methods: {
+      async create() {
+        this.msg = null;
+        try {
+          const payload = {
+            user_id: this.user.id,
+            type: this.type,
+            symbol: this.symbol,
+            amount: this.quantity,
+            price: this.price,
+            currency: 'USD',
+            full_name: this.symbol
+          };
+          const res = await fetch('/transactions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          if (!res.ok) {
+            const j = await res.json().catch(()=>({detail:'Fejl'}));
+            this.msg = j.detail || 'Kunne ikke oprette transaktion';
+            return;
+          }
+          this.msg = 'Transaktion oprettet';
+          this.$emit('created');
+        } catch (err) {
+          this.msg = err.message || String(err);
+        }
+      }
+    }
+  };
+
+  const PortfolioView = {
+    props: ['user','refreshKey'],
+    template: `
+      <div class="card">
+        <h3>Portefølje</h3>
+        <div v-if="loading">Indlæser...</div>
+        <div v-else>
+          <table v-if="items.length">
+            <thead><tr><th>Symbol</th><th>Kvantitet</th><th>Avg Kostpris</th><th>Nuværende værdi</th><th>Gevinst/tab i alt</th></tr></thead>
+            <tbody>
+              <tr v-for="it in items" :key="it.symbol">
+                <td>{{ it.symbol }}</td>
+                <td>{{ it.quantity }}</td>
+                <td>{{ it.avg_cost.toFixed(2) }}</td>
+                <td>{{ it.current_amount.toFixed(2) }}</td>
+                <td :class="{positive: it.profit>=0, negative: it.profit<0}">{{ it.profit.toFixed(2) }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-else>Ingen poster</div>
+        </div>
+      </div>
+    `,
+    data() { return { items:[], loading:false }; },
+    watch: {
+      refreshKey() { this.load(); }
+    },
+    mounted() { this.load(); },
+    methods: {
+      async load() {
+        if (!this.user) return;
+        this.loading = true;
+        try {
+          const res = await fetch(`/portfolio/${this.user.id}`);
+          if (!res.ok) { this.items = []; this.loading=false; return; }
+          this.items = await res.json();
+        } catch (err) {
+          this.items = [];
+        } finally { this.loading = false; }
+      }
+    }
+  };
+
+  const TransactionsView = {
+    props: ['user','refreshKey'],
+    template: `
+      <div class="card">
+        <h3>Transaktioner</h3>
+        <div v-if="loading">Indlæser...</div>
+        <div v-else>
+          <table v-if="items.length">
+            <thead><tr><th>Dato</th><th>Symbol</th><th>Type</th><th>Kvantitet</th><th>Pris</th><th>Beløb</th></tr></thead>
+            <tbody>
+              <tr v-for="it in items" :key="it.id">
+                <td>{{ formatDate(it.created_at) }}</td>
+                <td>{{ it.symbol }}</td>
+                <td>{{ it.type }}</td>
+                <td>{{ it.quantity }}</td>
+                <td>{{ it.price.toFixed(2) }}</td>
+                <td>{{ it.total_amount.toFixed(2) }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-else>Ingen transaktioner</div>
+        </div>
+      </div>
+    `,
+    data() { return { items:[], loading:false }; },
+    watch: { refreshKey() { this.load(); } },
+    mounted() { this.load(); },
+    methods: {
+      async load() {
+        if (!this.user) return;
+        this.loading = true;
+        try {
+          const res = await fetch(`/transactions/${this.user.id}`);
+          if (!res.ok) { this.items = []; this.loading=false; return; }
+          this.items = await res.json();
+          // sort newest first (created_at descending)
+          try {
+            this.items.sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+          } catch (e) {
+            // ignore sort errors
+          }
+        } catch (err) { this.items = []; }
+        finally { this.loading = false; }
+      },
+      formatDate(dt) {
+        try { return new Date(dt).toLocaleString(); } catch(e){ return dt }
+      }
+    }
+  };
+
+  const App = {
+    components: { 'login-form': LoginForm, 'transaction-form': TransactionForm, 'portfolio-view': PortfolioView, 'transactions-view': TransactionsView },
+    setup() {
+      const user = ref(null);
+      const refreshKey = ref(0);
+      function onLogin(u) { user.value = u; }
+      function refreshPortfolio() { refreshKey.value += 1; }
+      function logout() { user.value = null; refreshKey.value = 0; }
+      return { user, onLogin, refreshPortfolio, refreshKey, logout };
+    }
+  };
+
+  createApp(App).mount('#app');
+  </script>
+</body>
+</html>
