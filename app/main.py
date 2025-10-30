@@ -1,8 +1,11 @@
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from app.database import engine
 from app import models
 from app.routers import user as user_router
 from app.routers import transaction as transaction_router
+from app.routers import portfolio as portfolio_router
+from app.routers import auth as auth_router
 from app.services.price_updater import start_price_updater
 
 # Opret tabeller
@@ -27,6 +30,11 @@ def _shutdown_event():
 # Routers
 app.include_router(user_router.router)
 app.include_router(transaction_router.router)
+app.include_router(portfolio_router.router)
+app.include_router(auth_router.router)
+
+# Serve the static frontend at /app
+app.mount("/app", StaticFiles(directory="frontend", html=True), name="frontend")
 
 @app.get("/")
 def root():

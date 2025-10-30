@@ -29,3 +29,12 @@ class Transaction(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="transactions")
+
+
+# Ensure any split-out model modules are imported so SQLAlchemy registers them with Base.metadata
+try:
+    import app.models.portfolio  # noqa: F401
+    import app.models.stockprice  # noqa: F401
+except Exception:
+    # Import errors here shouldn't break app startup; they will be raised later when modules are used.
+    pass

@@ -6,6 +6,7 @@ from app.models import StockPrice
 from app.schemas import transaction as transaction_schema
 import yfinance as yf
 from app.services.stocks import get_stock_info
+from app.services.price_updater import recompute_portfolios_for_symbol
 
 router = APIRouter(
     prefix="/transactions",
@@ -53,7 +54,22 @@ def create_transaction(transaction_in: transaction_schema.TransactionCreate, db:
         db.add(sp)
         db.commit()
         db.refresh(sp)
-    return new_transaction
+        # Recompute portfolios immediately for the inserted symbol so new transactions show up
+        try:
+            recompute_portfolios_for_symbol(db, new_transaction.symbol)
+            db.commit()
+        except Exception:
+            # don't fail the transaction creation if recompute fails; log instead
+            pass
+    else:
+        # If the symbol already existed, still recompute portfolios so new transaction shows up immediately
+        try:
+            recompute_portfolios_for_symbol(db, new_transaction.symbol)
+            db.commit()
+        except Exception:
+            pass
+    # Return a validated Pydantic model instance to avoid response validation issues
+    return transaction_schema.TransactionRead.model_validate(new_transaction)
 
 @router.get("/{user_id}", response_model=list[transaction_schema.TransactionRead])
 def get_transactions_for_user(user_id: int, db: Session = Depends(get_db)):
