@@ -5,10 +5,12 @@ import time
 from datetime import datetime
 from sqlalchemy import func
 from typing import List
+from sqlalchemy import case
 
 from app.database import SessionLocal
 from app.models import StockPrice, UserPortfolio, Transaction
 from app.services.stocks import get_stock_info
+from app.services import ws_manager
 
 
 def recompute_portfolios_for_symbol(db, sym: str) -> None:
@@ -18,34 +20,56 @@ def recompute_portfolios_for_symbol(db, sym: str) -> None:
     UserPortfolio rows for every user who has BUY transactions for `sym`.
     """
     try:
+        # Compute buys and sells aggregates per user so we can derive net quantity and cost basis.
         portfolio_rows = (
-            db.query(Transaction.user_id,
-                     func.sum(Transaction.quantity).label('quantity'),
-                     func.sum(Transaction.total_amount).label('total_amount'))
+            db.query(
+                Transaction.user_id,
+                func.coalesce(func.sum(case((Transaction.type.ilike('BUY'), Transaction.quantity), else_=0)), 0).label('qty_buy'),
+                func.coalesce(func.sum(case((Transaction.type.ilike('SELL'), Transaction.quantity), else_=0)), 0).label('qty_sell'),
+                func.coalesce(func.sum(case((Transaction.type.ilike('BUY'), Transaction.total_amount), else_=0)), 0).label('spent_buy'),
+                func.coalesce(func.sum(case((Transaction.type.ilike('SELL'), Transaction.total_amount), else_=0)), 0).label('received_sell')
+            )
             .filter(Transaction.symbol == sym)
-            .filter(Transaction.type.ilike('BUY'))
             .group_by(Transaction.user_id)
             .all()
         )
 
+        processed_user_ids = set()
+
         for pr in portfolio_rows:
             user_id = pr[0]
-            qty = pr[1] or 0
-            total_spent = pr[2] or 0
-            sp = db.query(StockPrice).filter(StockPrice.symbol == sym).first()
-            current_price = sp.current_price if sp else 0
-            current_amount = qty * current_price
-            # average cost per share = total_spent / qty (if qty>0)
-            avg_cost = (total_spent / qty) if qty > 0 else 0.0
-            profit = current_amount - total_spent
+            qty_buy = pr[1] or 0
+            qty_sell = pr[2] or 0
+            spent_buy = pr[3] or 0
+            received_sell = pr[4] or 0
 
+            net_qty = qty_buy - qty_sell
+            net_total = spent_buy - received_sell
+
+            # If net_qty <= 0, remove any existing portfolio row for this user/symbol
             existing = db.query(UserPortfolio).filter(
                 UserPortfolio.user_id == user_id,
                 UserPortfolio.symbol == sym
             ).first()
+
+            if net_qty <= 0:
+                if existing:
+                    db.delete(existing)
+                # nothing more to do for this user
+                continue
+
+            # compute current price and derived fields
+            sp = db.query(StockPrice).filter(StockPrice.symbol == sym).first()
+            current_price = sp.current_price if sp else 0
+            current_amount = net_qty * current_price
+            avg_cost = (net_total / net_qty) if net_qty > 0 else 0.0
+            profit = current_amount - net_total
+
+            processed_user_ids.add(user_id)
+
             if existing:
-                existing.quantity = qty
-                existing.total_amount = total_spent
+                existing.quantity = net_qty
+                existing.total_amount = net_total
                 existing.avg_cost = avg_cost
                 existing.current_amount = current_amount
                 existing.profit = profit
@@ -54,13 +78,20 @@ def recompute_portfolios_for_symbol(db, sym: str) -> None:
                 up = UserPortfolio(
                     user_id=user_id,
                     symbol=sym,
-                    quantity=qty,
-                    total_amount=total_spent,
+                    quantity=net_qty,
+                    total_amount=net_total,
                     avg_cost=avg_cost,
                     current_amount=current_amount,
                     profit=profit,
                 )
                 db.add(up)
+
+        # Remove any UserPortfolio rows for this symbol that weren't in the processed_user_ids
+        if processed_user_ids:
+            db.query(UserPortfolio).filter(UserPortfolio.symbol == sym, ~UserPortfolio.user_id.in_(list(processed_user_ids))).delete(synchronize_session=False)
+        else:
+            # no users have positions for this symbol: remove all portfolio rows for the symbol
+            db.query(UserPortfolio).filter(UserPortfolio.symbol == sym).delete(synchronize_session=False)
     except Exception:
         _logger.exception("Error recomputing portfolios for %s", sym)
 
@@ -122,10 +153,36 @@ def _update_loop(stop_event: threading.Event, interval: int = 300, max_workers: 
                         sp = db.query(StockPrice).filter(StockPrice.symbol == sym).first()
                         if not sp:
                             continue
+                        # If the fetch returned an explicit error indicating symbol not found,
+                        # remove the StockPrice row to avoid keeping invalid symbols in the registry.
+                        err = info.get('error') if isinstance(info, dict) else None
+                        if err and ('Quote not found' in err or 'Not Found' in err or '404' in err or 'Quote not found for symbol' in err):
+                            try:
+                                db.delete(sp)
+                            except Exception:
+                                _logger.exception("Failed to delete invalid StockPrice %s", sym)
+                            continue
+
                         sp.current_price = info.get("price", sp.current_price)
                         sp.name = info.get("name", sp.name)
                         sp.currency = info.get("currency", sp.currency)
                         db.add(sp)
+
+                    # enqueue websocket messages for live updates
+                    try:
+                        for sym, info in results:
+                            msg = {
+                                'type': 'price_update',
+                                'symbol': sym,
+                                'price': info.get('price'),
+                                'name': info.get('name'),
+                                'currency': info.get('currency'),
+                                'last_updated': info.get('last_updated')
+                            }
+                            # non-async thread -> enqueue safely
+                            ws_manager.enqueue_message_from_thread(msg)
+                    except Exception:
+                        _logger.exception("Failed to enqueue websocket messages")
 
                     db.commit()
                     # After updating prices, recompute user portfolios for affected symbols

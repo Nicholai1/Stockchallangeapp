@@ -35,3 +35,14 @@ class TransactionRead(BaseModel):
     model_config = {
         "from_attributes": True
     }
+
+
+class TransactionUpdate(BaseModel):
+    user_id: int
+    quantity: float = Field(..., alias="amount")
+    price: float
+
+    model_config = {
+        "populate_by_name": True,
+        "from_attributes": True,
+    }

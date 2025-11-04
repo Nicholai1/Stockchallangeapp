@@ -4,9 +4,8 @@ from app.database import get_db
 from app.models import Transaction, User
 from app.models import StockPrice
 from app.schemas import transaction as transaction_schema
-import yfinance as yf
-from app.services.stocks import get_stock_info
 from app.services.price_updater import recompute_portfolios_for_symbol
+from app.schemas.transaction import TransactionUpdate
 
 router = APIRouter(
     prefix="/transactions",
@@ -20,16 +19,22 @@ def create_transaction(transaction_in: transaction_schema.TransactionCreate, db:
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Hent selskabsinfo fra Yahoo Finance
-    ticker = yf.Ticker(transaction_in.symbol)
-    info = ticker.info
-    company_name = info.get("longName") or transaction_in.symbol
-    currency = info.get("currency") or transaction_in.currency
+    # Use local metadata if available; avoid network calls here to prevent rate limits.
+    existing_sp = db.query(StockPrice).filter(StockPrice.symbol == transaction_in.symbol).first()
+    name = transaction_in.name if hasattr(transaction_in, 'name') else transaction_in.symbol
+    currency = transaction_in.currency
+
+    # If we have a StockPrice row, prefer its name/currency
+    if existing_sp:
+        if existing_sp.name:
+            name = existing_sp.name
+        if existing_sp.currency:
+            currency = existing_sp.currency
 
     new_transaction = Transaction(
         user_id=transaction_in.user_id,
         symbol=transaction_in.symbol,
-        name=company_name,
+        name=name,
         type=transaction_in.type,
         quantity=transaction_in.quantity,
         price=transaction_in.price,
@@ -41,33 +46,25 @@ def create_transaction(transaction_in: transaction_schema.TransactionCreate, db:
     db.commit()
     db.refresh(new_transaction)
 
-    # Hvis ticker ikke findes i StockPrice, indsæt den med nuværende pris
+    # If ticker doesn't exist in StockPrice, insert a lightweight row (no network calls)
     existing = db.query(StockPrice).filter(StockPrice.symbol == new_transaction.symbol).first()
     if not existing:
-        info = get_stock_info(new_transaction.symbol)
         sp = StockPrice(
             symbol=new_transaction.symbol,
-            name=info.get("name"),
-            currency=info.get("currency"),
-            current_price=info.get("price", 0),
+            name=new_transaction.name,
+            currency=new_transaction.currency,
+            current_price=0.0,
         )
         db.add(sp)
         db.commit()
         db.refresh(sp)
-        # Recompute portfolios immediately for the inserted symbol so new transactions show up
-        try:
-            recompute_portfolios_for_symbol(db, new_transaction.symbol)
-            db.commit()
-        except Exception:
-            # don't fail the transaction creation if recompute fails; log instead
-            pass
-    else:
-        # If the symbol already existed, still recompute portfolios so new transaction shows up immediately
-        try:
-            recompute_portfolios_for_symbol(db, new_transaction.symbol)
-            db.commit()
-        except Exception:
-            pass
+
+    # Recompute portfolios for the symbol so user's portfolio reflects the new transaction
+    try:
+        recompute_portfolios_for_symbol(db, new_transaction.symbol)
+        db.commit()
+    except Exception:
+        pass
     # Return a validated Pydantic model instance to avoid response validation issues
     return transaction_schema.TransactionRead.model_validate(new_transaction)
 
@@ -75,3 +72,52 @@ def create_transaction(transaction_in: transaction_schema.TransactionCreate, db:
 def get_transactions_for_user(user_id: int, db: Session = Depends(get_db)):
     transactions = db.query(Transaction).filter(Transaction.user_id == user_id).all()
     return transactions
+
+
+
+@router.put("/{transaction_id}", response_model=transaction_schema.TransactionRead)
+def update_transaction(transaction_id: int, update: TransactionUpdate, db: Session = Depends(get_db)):
+    t = db.query(Transaction).filter(Transaction.id == transaction_id).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if t.user_id != update.user_id:
+        raise HTTPException(status_code=403, detail="Not allowed to modify this transaction")
+
+    # apply changes
+    t.quantity = update.quantity
+    t.price = update.price
+    t.total_amount = update.quantity * update.price
+    db.add(t)
+    db.commit()
+    db.refresh(t)
+
+    # recompute portfolios for this symbol
+    try:
+        recompute_portfolios_for_symbol(db, t.symbol)
+        db.commit()
+    except Exception:
+        pass
+
+    return transaction_schema.TransactionRead.model_validate(t)
+
+
+@router.delete("/{transaction_id}")
+def delete_transaction(transaction_id: int, user_id: int, db: Session = Depends(get_db)):
+    t = db.query(Transaction).filter(Transaction.id == transaction_id).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if t.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Not allowed to delete this transaction")
+
+    symbol = t.symbol
+    db.delete(t)
+    db.commit()
+
+    # recompute portfolios for this symbol
+    try:
+        recompute_portfolios_for_symbol(db, symbol)
+        db.commit()
+    except Exception:
+        pass
+
+    return {"detail": "deleted"}
