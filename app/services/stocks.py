@@ -79,9 +79,10 @@ def get_stock_info(symbol: str, use_cache: bool = True) -> dict:
             _logger.debug("Failed to set cache for %s", sym, exc_info=True)
 
         return result
-    except Exception:
+    except Exception as e:
         _logger.exception("Error fetching %s", sym)
-        return {"symbol": sym, "name": sym, "price": 0, "currency": "N/A"}
+        # Return an error field so callers can act (for example remove invalid symbols)
+        return {"symbol": sym, "name": sym, "price": 0, "currency": "N/A", "error": str(e)}
 
 
 def ensure_stock_in_db(db, symbol: str):

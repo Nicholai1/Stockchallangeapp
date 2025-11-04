@@ -5,29 +5,73 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Stock Portfolio - Demo</title>
   <link rel="stylesheet" href="/app/main.css" />
+  <!-- Font Awesome for icons (free) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
   <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
 </head>
 <body>
-  <div id="app">
+  <div id="app" class="app-container">
     <header>
-      <h1>Stock Portfolio (Demo)</h1>
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <h1><i class="fa-solid fa-chart-line"></i> Stock Portfolio</h1>
+        <nav>
+          <a href="#/dashboard" v-if="user">Dashboard</a>
+          <!-- Make Manage visible so users can discover the page; route guard will redirect unauthenticated users to login -->
+          <a href="#/manage-transactions">Manage</a>
+          <a href="#/login" v-if="!user">Login</a>
+        </nav>
+      </div>
     </header>
 
-    <section>
+    <div v-if="route==='#/login'" class="center">
       <login-form @login-success="onLogin"></login-form>
-    </section>
+    </div>
 
-    <section v-if="user">
-      <div style="display:flex;align-items:center;justify-content:space-between">
-        <h2>Hej, {{ user.username }}</h2>
-        <div>
-          <button @click="logout">Logout</button>
+    <div v-if="route==='#/dashboard'">
+      <div v-if="!user" class="center">
+        <!-- route guard fallback: will be redirected by route watcher, show placeholder -->
+        <div>Omdirigerer til login…</div>
+      </div>
+      <div v-else>
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <h2>Hej, {{ user.username }}</h2>
+          <div>
+            <button @click="logout">Logout</button>
+          </div>
+        </div>
+
+        <div class="grid">
+          <div>
+            <transaction-form :user="user" @created="refreshPortfolio"></transaction-form>
+            <portfolio-view :user="user" :refresh-key="refreshKey"></portfolio-view>
+          </div>
+          <div>
+            <transactions-view :user="user" :refresh-key="refreshKey"></transactions-view>
+          </div>
         </div>
       </div>
-      <transaction-form :user="user" @created="refreshPortfolio"></transaction-form>
-      <portfolio-view :user="user" :refresh-key="refreshKey"></portfolio-view>
-      <transactions-view :user="user" :refresh-key="refreshKey"></transactions-view>
-    </section>
+    </div>
+    
+    <div v-if="route==='#/manage-transactions'">
+      <div v-if="!user" class="center">
+        <div>Omdirigerer til login…</div>
+      </div>
+      <div v-else>
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <h2>Rediger transaktioner — {{ user.username }}</h2>
+          <div>
+            <button @click="logout">Logout</button>
+          </div>
+        </div>
+        <div class="grid">
+          <div style="display:flex;justify-content:center;">
+            <div style="width:720px;max-width:100%;">
+              <manage-transactions-view :user="user" :refresh-key="refreshKey" @refresh="refreshPortfolio"></manage-transactions-view>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -134,7 +178,12 @@
         <h3>Opret transaktion</h3>
         <form @submit.prevent="create">
           <label>Symbol
-            <input v-model="symbol" required />
+            <input v-model="symbol" @input="onSymbolInput" @focus="showSuggestions=true" autocomplete="off" required />
+            <ul v-if="showSuggestions && suggestions.length" class="suggestions">
+              <li v-for="s in suggestions" :key="s.symbol" @mousedown.prevent="chooseSuggestion(s)">
+                <strong>{{ s.symbol }}</strong> — <small>{{ s.name }}</small>
+              </li>
+            </ul>
           </label>
           <label>Type
             <select v-model="type">
@@ -142,10 +191,10 @@
               <option value="sell">Sell</option>
             </select>
           </label>
-          <label>Quantity
+          <label>Antal
             <input v-model.number="quantity" type="number" step="any" required />
           </label>
-          <label>Price
+          <label>Kostpris
             <input v-model.number="price" type="number" step="any" required />
           </label>
           <button type="submit">Opret</button>
@@ -153,7 +202,7 @@
         </form>
       </div>
     `,
-    data() { return { symbol:'AAPL', type:'buy', quantity:1, price:0, msg:null }; },
+  data() { return { symbol:'AAPL', type:'buy', quantity:1, price:0, msg:null, suggestions: [], showSuggestions: false, full_name: '', _debounceTimer: null }; },
     methods: {
       async create() {
         this.msg = null;
@@ -165,7 +214,7 @@
             amount: this.quantity,
             price: this.price,
             currency: 'USD',
-            full_name: this.symbol
+            full_name: this.full_name || this.symbol
           };
           const res = await fetch('/transactions', {
             method: 'POST',
@@ -182,6 +231,33 @@
         } catch (err) {
           this.msg = err.message || String(err);
         }
+  },
+
+  // Autocomplete helpers
+      onSymbolInput() {
+        this.full_name = '';
+        if (this._debounceTimer) clearTimeout(this._debounceTimer);
+        const q = this.symbol && this.symbol.trim();
+        if (!q) { this.suggestions = []; return; }
+        this._debounceTimer = setTimeout(() => this.fetchSuggestions(q), 300);
+      },
+
+      async fetchSuggestions(q) {
+        try {
+          const res = await fetch(`/symbols/search?q=${encodeURIComponent(q)}`);
+          if (!res.ok) { this.suggestions = []; return; }
+          const arr = await res.json();
+          this.suggestions = arr.slice(0,10);
+        } catch (e) { this.suggestions = []; }
+      },
+
+      chooseSuggestion(s) {
+        this.symbol = s.symbol;
+        this.full_name = s.name || s.symbol;
+        // auto-fill price if available
+        if (typeof s.price === 'number') this.price = s.price;
+        this.suggestions = [];
+        this.showSuggestions = false;
       }
     }
   };
@@ -194,14 +270,15 @@
         <div v-if="loading">Indlæser...</div>
         <div v-else>
           <table v-if="items.length">
-            <thead><tr><th>Symbol</th><th>Kvantitet</th><th>Avg Kostpris</th><th>Nuværende værdi</th><th>Gevinst/tab i alt</th></tr></thead>
+            <thead><tr><th>Kort navn</th><th>Antal</th><th>Avg Kostpris</th><th>Total kostpris</th><th>Nuværende værdi</th><th>Gevinst/tab i alt</th></tr></thead>
             <tbody>
               <tr v-for="it in items" :key="it.symbol">
-                <td>{{ it.symbol }}</td>
-                <td>{{ it.quantity }}</td>
-                <td>{{ it.avg_cost.toFixed(2) }}</td>
-                <td>{{ it.current_amount.toFixed(2) }}</td>
-                <td :class="{positive: it.profit>=0, negative: it.profit<0}">{{ it.profit.toFixed(2) }}</td>
+                <td style="max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ it.name || '' }}</td>
+                <td class="right">{{ formatNumber(it.quantity) }}</td>
+                <td>{{ formatCurrency(it.avg_cost, it.currency) }}</td>
+                <td>{{ formatCurrency((it.avg_cost || 0) * (it.quantity || 0), it.currency) }}</td>
+                <td>{{ formatCurrency(it.current_amount, it.currency) }}</td>
+                <td :class="{positive: it.profit>=0, negative: it.profit<0}">{{ formatCurrency(it.profit, it.currency) }}</td>
               </tr>
             </tbody>
           </table>
@@ -215,16 +292,135 @@
     },
     mounted() { this.load(); },
     methods: {
-      async load() {
-        if (!this.user) return;
-        this.loading = true;
+      // Format helpers: use Intl.NumberFormat when possible; fall back to simple formatting
+      formatCurrency(value, currency) {
+        const num = Number(value || 0);
+        if (currency && typeof Intl !== 'undefined' && Intl.NumberFormat) {
+          try {
+            // Use currency code if known; fallback to plain number
+            return new Intl.NumberFormat(undefined, { style: 'currency', currency: currency, maximumFractionDigits: 2 }).format(num);
+          } catch (e) {
+            // If Intl cannot format this currency code, fall through
+          }
+        }
+        // Fallback: show code and fixed number
+        const fixed = num.toFixed(2);
+        return currency ? `${fixed} ${currency}` : fixed;
+      },
+
+      formatNumber(value) {
+        try { return Number(value || 0).toLocaleString(); } catch(e){ return value }
+      },
+
+    async load() {
+  if (!this.user) return;
+  this.loading = true;
+  try {
+    const res = await fetch(`/portfolio/${this.user.id}`);
+    if (!res.ok) { 
+      this.items = []; 
+      this.loading = false; 
+      return; 
+    }
+    this.items = await res.json();
+
+    // 🔹 Sortér alfabetisk efter kort navn (case-insensitive)
+    this.items.sort((a, b) => {
+      const na = (a.name || '').toUpperCase();
+      const nb = (b.name || '').toUpperCase();
+      if (na < nb) return -1;
+      if (na > nb) return 1;
+      return 0;
+    });
+
+    // Start polling for priser
+    this.startPricePoll();
+  } catch (err) {
+    this.items = [];
+  } finally {
+    this.loading = false;
+  }
+},
+
+      startPricePoll() {
+        // close existing ws if present
+        if (this._ws) {
+          try { this._ws.close(); } catch(e){}
+          this._ws = null;
+        }
+        const symbols = this.items.map(i => i.symbol);
+        if (!symbols.length) return;
+
+        const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+        const wsUrl = `${scheme}://${location.host}/ws/prices`;
         try {
-          const res = await fetch(`/portfolio/${this.user.id}`);
-          if (!res.ok) { this.items = []; this.loading=false; return; }
-          this.items = await res.json();
-        } catch (err) {
-          this.items = [];
-        } finally { this.loading = false; }
+          this._ws = new WebSocket(wsUrl);
+        } catch (e) {
+          // fallback to polling if WS cannot be created
+          this._startPollingFallback(symbols);
+          return;
+        }
+
+        this._ws.addEventListener('open', () => {
+          // subscribe to our symbols
+          this._ws.send(JSON.stringify({ type: 'subscribe', symbols }));
+        });
+
+        this._ws.addEventListener('message', (ev) => {
+          try {
+            const msg = JSON.parse(ev.data);
+            if (msg.type === 'price_update' && msg.symbol) {
+              const sym = msg.symbol;
+              const p = Number(msg.price);
+              this.items = this.items.map(it => {
+                if (it.symbol === sym && !isNaN(p)) {
+                  it.current_amount = it.quantity * p;
+                  // note: total_amount is not shown in transactions but portfolio still has total_amount
+                  it.profit = it.current_amount - it.total_amount;
+                }
+                return it;
+              });
+            }
+          } catch (e) {
+            // ignore malformed
+          }
+        });
+
+        this._ws.addEventListener('close', () => {
+          // try polling fallback
+          this._startPollingFallback(symbols);
+        });
+
+        this._ws.addEventListener('error', () => {
+          // try polling fallback
+          this._startPollingFallback(symbols);
+        });
+      },
+
+      _startPollingFallback(symbols) {
+        // cleanup any ws
+        if (this._ws) { try { this._ws.close(); } catch(e){} this._ws = null; }
+        // start polling every 5 seconds
+        if (this._priceTimer) clearInterval(this._priceTimer);
+        const joined = symbols.join(',');
+        this._priceTimer = setInterval(async () => {
+          try {
+            const res = await fetch(`/stock_prices/?symbols=${encodeURIComponent(joined)}`);
+            if (!res.ok) return;
+            const prices = await res.json();
+            const priceMap = Object.fromEntries(prices.map(p=>[p.symbol, p.price]));
+            this.items = this.items.map(it => {
+              const p = priceMap[it.symbol];
+              if (typeof p === 'number') {
+                it.current_amount = it.quantity * p;
+                it.profit = it.current_amount - it.total_amount;
+              }
+              return it;
+            });
+          } catch (e) {
+            // ignore
+          }
+        }, 5000);
       }
     }
   };
@@ -237,15 +433,14 @@
         <div v-if="loading">Indlæser...</div>
         <div v-else>
           <table v-if="items.length">
-            <thead><tr><th>Dato</th><th>Symbol</th><th>Type</th><th>Kvantitet</th><th>Pris</th><th>Beløb</th></tr></thead>
+            <thead><tr><th>Dato</th><th>Symbol</th><th>Type</th><th>Antal</th><th>Pris</th></tr></thead>
             <tbody>
               <tr v-for="it in items" :key="it.id">
-                <td>{{ formatDate(it.created_at) }}</td>
-                <td>{{ it.symbol }}</td>
-                <td>{{ it.type }}</td>
-                <td>{{ it.quantity }}</td>
-                <td>{{ it.price.toFixed(2) }}</td>
-                <td>{{ it.total_amount.toFixed(2) }}</td>
+              <td>{{ formatDate(it.created_at) }}</td>
+              <td>{{ it.symbol }}</td>
+              <td>{{ it.type }}</td>
+              <td class="right">{{ it.quantity }}</td>
+              <td class="right">{{ it.price.toFixed(2) }}</td>   
               </tr>
             </tbody>
           </table>
@@ -279,15 +474,108 @@
     }
   };
 
+  const ManageTransactionsView = {
+    props: ['user','refreshKey'],
+    template: `
+      <div class="card">
+        <h3>Rediger transaktioner</h3>
+        <div v-if="loading">Indlæser...</div>
+        <div v-else>
+          <table v-if="items.length">
+            <thead><tr><th>Dato</th><th>Symbol</th><th>Type</th><th>Antal</th><th>Pris</th><th></th></tr></thead>
+            <tbody>
+              <tr v-for="it in items" :key="it.id">
+                <td>{{ formatDate(it.created_at) }}</td>
+                <td>{{ it.symbol }}</td>
+                <td>{{ it.type }}</td>
+                <td v-if="!it._editing">{{ it.quantity }}</td>
+                <td v-else><input v-model.number="it._editQuantity" type="number" step="any" /></td>
+                <td v-if="!it._editing">{{ it.price.toFixed(2) }}</td>
+                <td v-else><input v-model.number="it._editPrice" type="number" step="any" /></td>
+                <td>
+                  <button v-if="!it._editing" @click="startEdit(it)">Edit</button>
+                  <button v-else @click="saveEdit(it)">Save</button>
+                  <button style="background:#d33;margin-left:8px" @click="deleteTx(it)">✖</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-else>Ingen transaktioner</div>
+        </div>
+      </div>
+    `,
+    data() { return { items:[], loading:false }; },
+    watch: { refreshKey() { this.load(); } },
+    mounted() { this.load(); },
+    methods: {
+      async load() {
+        if (!this.user) return;
+        this.loading = true;
+        try {
+          const res = await fetch(`/transactions/${this.user.id}`);
+          if (!res.ok) { this.items = []; this.loading=false; return; }
+          this.items = await res.json();
+          // prepare editing fields
+          this.items = this.items.map(it => ({ ...it, _editing:false, _editQuantity: it.quantity, _editPrice: it.price }));
+        } catch (err) { this.items = []; }
+        finally { this.loading = false; }
+      },
+      formatDate(dt) { try { return new Date(dt).toLocaleString(); } catch(e){ return dt } },
+      startEdit(it) { it._editing = true; },
+      async saveEdit(it) {
+        try {
+          const payload = { user_id: this.user.id, amount: it._editQuantity, price: it._editPrice };
+          const res = await fetch(`/transactions/${it.id}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+          if (!res.ok) { const j = await res.json().catch(()=>({detail:'Fejl'})); alert(j.detail || 'Kunne ikke gemme'); return; }
+          const updated = await res.json();
+          // update local row
+          it.quantity = updated.quantity; it.price = updated.price; it.total_amount = updated.total_amount; it._editing = false;
+          this.$emit('refresh');
+        } catch (e) { alert(e.message || e); }
+      },
+      async deleteTx(it) {
+        if (!confirm('Slet denne transaktion?')) return;
+        try {
+          const res = await fetch(`/transactions/${it.id}?user_id=${this.user.id}`, { method: 'DELETE' });
+          if (!res.ok) { const j = await res.json().catch(()=>({detail:'Fejl'})); alert(j.detail || 'Kunne ikke slette'); return; }
+          // remove locally
+          this.items = this.items.filter(x=>x.id !== it.id);
+          this.$emit('refresh');
+        } catch (e) { alert(e.message || e); }
+      }
+    }
+  };
+
   const App = {
-    components: { 'login-form': LoginForm, 'transaction-form': TransactionForm, 'portfolio-view': PortfolioView, 'transactions-view': TransactionsView },
+    components: { 'login-form': LoginForm, 'transaction-form': TransactionForm, 'portfolio-view': PortfolioView, 'transactions-view': TransactionsView, 'manage-transactions-view': ManageTransactionsView },
     setup() {
       const user = ref(null);
       const refreshKey = ref(0);
-      function onLogin(u) { user.value = u; }
+      const route = ref(window.location.hash || '#/login');
+
+      function onLogin(u) { user.value = u; route.value = '#/dashboard'; window.location.hash = '#/dashboard'; }
       function refreshPortfolio() { refreshKey.value += 1; }
-      function logout() { user.value = null; refreshKey.value = 0; }
-      return { user, onLogin, refreshPortfolio, refreshKey, logout };
+      function logout() { user.value = null; refreshKey.value = 0; route.value = '#/login'; window.location.hash = '#/login'; }
+
+      // Listen to hash changes to support back/forward navigation and enforce a route guard.
+      window.addEventListener('hashchange', () => {
+        const newRoute = window.location.hash || '#/login';
+        // If navigating to dashboard while not authenticated, redirect to login
+        if (newRoute === '#/dashboard' && !user.value) {
+          window.location.hash = '#/login';
+          route.value = '#/login';
+          return;
+        }
+        route.value = newRoute;
+      });
+
+      // On initial load, ensure route guard is applied
+      if (route.value === '#/dashboard' && !user.value) {
+        window.location.hash = '#/login';
+        route.value = '#/login';
+      }
+
+      return { user, onLogin, refreshPortfolio, refreshKey, logout, route };
     }
   };
 
